@@ -14,6 +14,18 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+     tailwind.config = {
+       theme: {
+         extend: {
+           colors: {
+             sliderTrack: '#333',
+             sliderThumb: '#3b82f6',
+           }
+         }
+       }
+     }
+    </script>
     
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -21,7 +33,7 @@
     <!-- HEIC Conversion Library -->
     <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 
-    <!-- FileSaver Library (No JSZip needed anymore) -->
+    <!-- FileSaver Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
     <!-- App Icon -->
@@ -36,27 +48,23 @@
             -webkit-tap-highlight-color: transparent;
         }
         /* Custom Scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #1a1a1a; 
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #444; 
-            border-radius: 4px;
-        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1a1a1a; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
         .loader {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #3b82f6;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
+            border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Range Slider Styling */
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; height: 4px; background: #333; border-radius: 2px; outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 16px; height: 16px; background: #3b82f6; cursor: pointer; border-radius: 50%; border: 2px solid #0f0f0f;
+        }
+        input[type=range]::-moz-range-thumb {
+            width: 16px; height: 16px; background: #3b82f6; cursor: pointer; border-radius: 50%; border: 2px solid #0f0f0f;
         }
     </style>
 </head>
@@ -64,84 +72,62 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback } = React;
 
         // --- UTILS ---
-
-        // Helper: Convert large raw/heic to full quality JPG blob without resizing
         const convertToJpgFullRes = (file) => {
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 const url = URL.createObjectURL(file);
-                
                 img.onload = () => {
                     URL.revokeObjectURL(url);
-                    
-                    // Use natural dimensions - NO RESIZING
                     const width = img.naturalWidth;
                     const height = img.naturalHeight;
-
                     const canvas = document.createElement('canvas');
                     canvas.width = width;
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
-                    
-                    // High quality rendering
                     ctx.imageSmoothingEnabled = true;
                     ctx.imageSmoothingQuality = 'high';
                     ctx.drawImage(img, 0, 0, width, height);
-                    
-                    // Export as JPG high quality
                     canvas.toBlob((blob) => {
-                        if (blob) {
-                            resolve(blob);
-                        } else {
-                            reject(new Error("Canvas to Blob failed (Memory limit might be reached)"));
-                        }
+                        if (blob) resolve(blob); else reject(new Error("Canvas to Blob failed"));
                     }, 'image/jpeg', 0.95);
                 };
-                
-                img.onerror = (e) => {
-                    URL.revokeObjectURL(url);
-                    reject(e);
-                };
-                
+                img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
                 img.src = url;
             });
         };
 
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-        // --- FILTER ALGORITHMS ---
+        // Debounce helper function
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                const context = this;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
+        }
 
+        // --- FILTER ALGORITHMS (Applied at 100% strength) ---
         const applyEvokeFilter = (ctx, width, height) => {
             const imageData = ctx.getImageData(0, 0, width, height);
             const data = imageData.data;
-            
-            // Daido Moriyama: High Contrast, B&W, Grain
             const contrast = 100; 
             const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-            
             for (let i = 0; i < data.length; i += 4) {
-                // Grayscale
                 let gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-                // Contrast
                 gray = factor * (gray - 128) + 128;
-                // Hard Clipping
                 if (gray > 240) gray = 255;
                 if (gray < 20) gray = 0;
-                // Grain
                 const noise = (Math.random() - 0.5) * 50;
                 let final = gray + noise;
                 final = Math.min(255, Math.max(0, final));
-
-                data[i] = final;
-                data[i + 1] = final;
-                data[i + 2] = final;
+                data[i] = final; data[i + 1] = final; data[i + 2] = final;
             }
             ctx.putImageData(imageData, 0, 0);
-            
-            // Vignette
             const gradient = ctx.createRadialGradient(width/2, height/2, width/3, width/2, height/2, width);
             gradient.addColorStop(0, "rgba(0,0,0,0)");
             gradient.addColorStop(1, "rgba(0,0,0,0.6)");
@@ -152,40 +138,18 @@
         const applySaulLeiterFilter = (ctx, width, height) => {
             const imageData = ctx.getImageData(0, 0, width, height);
             const data = imageData.data;
-
-            // Saul Leiter: Kodachrome, Warm, Deep Blacks
             const contrast = 30; 
             const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-
             for (let i = 0; i < data.length; i += 4) {
-                let r = data[i];
-                let g = data[i + 1];
-                let b = data[i + 2];
-
-                // Contrast
-                r = factor * (r - 128) + 128;
-                g = factor * (g - 128) + 128;
-                b = factor * (b - 128) + 128;
-
-                // Color Grading
-                r = r * 1.15; // Red boost
-                g = g * 1.05; 
-                b = b * 0.95; // Blue damp
-
-                // Saturation
+                let r = data[i]; let g = data[i + 1]; let b = data[i + 2];
+                r = factor * (r - 128) + 128; g = factor * (g - 128) + 128; b = factor * (b - 128) + 128;
+                r = r * 1.15; g = g * 1.05; b = b * 0.95; 
                 const gray = 0.299 * r + 0.587 * g + 0.114 * b;
                 const satFactor = 1.4; 
-                r = gray + (r - gray) * satFactor;
-                g = gray + (g - gray) * satFactor;
-                b = gray + (b - gray) * satFactor;
-
-                data[i] = Math.min(255, Math.max(0, r));
-                data[i + 1] = Math.min(255, Math.max(0, g));
-                data[i + 2] = Math.min(255, Math.max(0, b));
+                r = gray + (r - gray) * satFactor; g = gray + (g - gray) * satFactor; b = gray + (b - gray) * satFactor;
+                data[i] = Math.min(255, Math.max(0, r)); data[i + 1] = Math.min(255, Math.max(0, g)); data[i + 2] = Math.min(255, Math.max(0, b));
             }
             ctx.putImageData(imageData, 0, 0);
-
-            // Warm overlay
             ctx.globalCompositeOperation = 'overlay';
             ctx.fillStyle = 'rgba(255, 200, 150, 0.15)';
             ctx.fillRect(0, 0, width, height);
@@ -193,7 +157,6 @@
         };
 
         // --- COMPONENTS ---
-
         const Icon = ({ name, size = 20, className = "" }) => {
             const ref = useRef(null);
             useEffect(() => {
@@ -212,92 +175,75 @@
         };
 
         const App = () => {
+            // Image structure: { id, blob, name, previewUrl, processedUrl, filter, intensity (0-100) }
             const [images, setImages] = useState([]);
             const [processing, setProcessing] = useState(false);
             const [statusText, setStatusText] = useState("");
             const fileInputRef = useRef(null);
+            // Ref to store debounced functions per image to avoid recreating them
+            const debouncedProcessors = useRef({});
 
             const handleFileUpload = async (e) => {
                 const files = Array.from(e.target.files);
                 if (files.length === 0) return;
-
                 setProcessing(true);
                 e.target.value = '';
 
                 for (let i = 0; i < files.length; i++) {
                     const file = files[i];
                     setStatusText(`Đang tải ảnh ${i + 1}/${files.length}...`);
-                    await sleep(50); // Yield UI
+                    await sleep(50);
 
                     try {
                         let processableBlob = file;
-                        let isConverted = false;
-
-                        // 1. HEIC Handling (Full Quality)
                         if (file.type === "image/heic" || file.name.toLowerCase().endsWith('.heic')) {
                             setStatusText(`Đang chuyển đổi HEIC ${i + 1}...`);
-                            const conversionResult = await heic2any({ 
-                                blob: file, 
-                                toType: "image/jpeg", 
-                                quality: 0.95 // Keep quality high
-                            });
+                            const conversionResult = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.95 });
                             processableBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
-                            isConverted = true;
-                        } 
-                        // 2. RAW/Large Handling (Assume browser can read generic image types, if not convert via canvas)
-                        else if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-                            // Try to force convert via canvas to standard JPG blob
-                            // This catches some raw formats browsers might preview but not treat as standard
+                        } else if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
                             setStatusText(`Đang xử lý RAW ${i + 1}...`);
-                            try {
-                                processableBlob = await convertToJpgFullRes(file);
-                                isConverted = true;
-                            } catch (e) {
-                                console.warn("Raw conversion via canvas failed, trying direct load", e);
-                            }
+                            try { processableBlob = await convertToJpgFullRes(file); } catch (e) { console.warn("Raw fallback failed", e); }
                         }
-
-                        // If it was converted or is just a file, we create a URL
-                        // Note: If we just have a standard JPG/PNG, we use it directly to save memory initially
-                        // But to ensure consistent "JPG" export later, we treat it as source.
                         
                         const previewUrl = URL.createObjectURL(processableBlob);
-                        
                         const newImage = {
                             id: Math.random().toString(36).substr(2, 9),
-                            blob: processableBlob, // Keep source blob
-                            name: file.name.replace(/\.[^/.]+$/, "") + ".jpg", // Force JPG name
+                            blob: processableBlob,
+                            name: file.name.replace(/\.[^/.]+$/, "") + ".jpg",
                             previewUrl: previewUrl,
                             processedUrl: null, 
                             filter: 'none',
+                            intensity: 100 // Default intensity
                         };
-
                         setImages(prev => [...prev, newImage]);
-
                     } catch (err) {
                         console.error("Error processing file:", file.name, err);
-                        alert(`Lỗi file: ${file.name}. Có thể file hỏng hoặc bộ nhớ không đủ.`);
+                        alert(`Lỗi file: ${file.name}`);
                     }
                 }
-
-                setProcessing(false);
-                setStatusText("");
+                setProcessing(false); setStatusText("");
             };
 
-            const processImage = async (imgId, filterType) => {
+            // Core processing function with intensity blending
+            const processImageFunc = async (imgId, filterType, intensityValue) => {
                 const targetImg = images.find(img => img.id === imgId);
                 if (!targetImg) return;
 
-                // Update UI state immediately to show selection
+                // Update state view immediately
                 setImages(prev => prev.map(img => 
-                    img.id === imgId ? { ...img, filter: filterType, processedUrl: filterType === 'none' ? null : img.processedUrl } : img
+                    img.id === imgId ? { ...img, filter: filterType, intensity: intensityValue } : img
                 ));
 
-                if (filterType === 'none') return;
+                const intensityNorm = intensityValue / 100;
 
-                setProcessing(true);
-                setStatusText("Đang áp dụng bộ lọc...");
-                await sleep(10);
+                if (filterType === 'none' || intensityNorm === 0) {
+                    setImages(prev => prev.map(img => img.id === imgId ? { ...img, processedUrl: null } : img));
+                    return;
+                }
+                
+                // Don't show global loading for slider adjustments, it's too intrusive.
+                // Only show if it looks like a big operation (e.g. initial filter select)
+                // For now, let's keep it simple and not trigger global loading on slider drag.
 
                 return new Promise((resolve) => {
                     const img = new Image();
@@ -305,18 +251,32 @@
                     
                     img.onload = () => {
                         const canvas = document.createElement('canvas');
-                        // Use FULL Resolution
                         canvas.width = img.width;
                         canvas.height = img.height;
                         const ctx = canvas.getContext('2d');
+
+                        // 1. Draw Original Base
                         ctx.drawImage(img, 0, 0);
 
-                        if (filterType === 'evoke') applyEvokeFilter(ctx, canvas.width, canvas.height);
-                        else if (filterType === 'leiter') applySaulLeiterFilter(ctx, canvas.width, canvas.height);
+                        // 2. Create Offscreen Canvas for 100% Filtered version
+                        if (intensityNorm > 0) {
+                            const offCanvas = document.createElement('canvas');
+                            offCanvas.width = canvas.width;
+                            offCanvas.height = canvas.height;
+                            const offCtx = offCanvas.getContext('2d');
+                            offCtx.drawImage(img, 0, 0);
+
+                            if (filterType === 'evoke') applyEvokeFilter(offCtx, canvas.width, canvas.height);
+                            else if (filterType === 'leiter') applySaulLeiterFilter(offCtx, canvas.width, canvas.height);
+
+                            // 3. Blend filtered version onto original using globalAlpha
+                            ctx.globalAlpha = intensityNorm;
+                            ctx.drawImage(offCanvas, 0, 0);
+                            ctx.globalAlpha = 1.0; // Reset
+                        }
 
                         canvas.toBlob((blob) => {
                             const newUrl = URL.createObjectURL(blob);
-                            
                             setImages(prev => prev.map(currentImg => {
                                 if (currentImg.id === imgId) {
                                     if (currentImg.processedUrl) URL.revokeObjectURL(currentImg.processedUrl);
@@ -324,78 +284,58 @@
                                 }
                                 return currentImg;
                             }));
-                            setProcessing(false);
-                            setStatusText("");
                             resolve();
-                        }, 'image/jpeg', 0.95); // High quality JPG export
+                        }, 'image/jpeg', 0.95);
                     };
-
-                    img.onerror = () => {
-                        setProcessing(false);
-                        alert("Lỗi xử lý ảnh (có thể do quá lớn).");
-                        resolve();
-                    };
+                    img.onerror = () => { alert("Lỗi xử lý ảnh."); resolve(); };
                 });
             };
 
-            const handleFilterChange = async (imgId, filterType) => {
-                await processImage(imgId, filterType);
+            // Get or create a debounced processor for a specific image ID
+            const getDebouncedProcessor = (imgId) => {
+                if (!debouncedProcessors.current[imgId]) {
+                    debouncedProcessors.current[imgId] = debounce((filterType, intensity) => {
+                        processImageFunc(imgId, filterType, intensity);
+                    }, 200); // 200ms debounce
+                }
+                return debouncedProcessors.current[imgId];
             };
 
-            const applyBatchFilter = async (filterType) => {
-                if (images.length === 0) return;
-                setProcessing(true);
-                
-                for (let i = 0; i < images.length; i++) {
-                    if (images[i].filter !== filterType) {
-                        setStatusText(`Đang xử lý ${i + 1}/${images.length}...`);
-                        await processImage(images[i].id, filterType);
-                    }
-                }
-                setProcessing(false);
-                setStatusText("");
+            // Handle button click (sets intensity to 100)
+            const handleFilterButtonClick = async (imgId, filterType) => {
+                const targetImg = images.find(img => img.id === imgId);
+                if(targetImg.filter === filterType) return; // No change
+
+                const newIntensity = filterType === 'none' ? 0 : 100;
+                setProcessing(true); setStatusText("Đang áp dụng...");
+                await processImageFunc(imgId, filterType, newIntensity);
+                setProcessing(false); setStatusText("");
+            };
+
+            // Handle slider change (uses debounce)
+            const handleIntensityChange = (imgId, newIntensity) => {
+                const targetImg = images.find(img => img.id === imgId);
+                // Update UI immediately
+                setImages(prev => prev.map(img => img.id === imgId ? { ...img, intensity: newIntensity } : img));
+                // Trigger debounced processing
+                getDebouncedProcessor(imgId)(targetImg.filter, newIntensity);
             };
 
             const saveSingleImage = (img) => {
                 const url = img.processedUrl || img.previewUrl;
-                // If the preview is just the raw file object URL, we need to ensure it saves as JPG.
-                // Our upload logic renamed it to .jpg in the state, but if it was a PNG blob originally, saving might be tricky.
-                // However, requirement said: "save as jpg regardless". 
-                // If filter is 'none' and input was PNG, we might be saving PNG as .jpg extension. 
-                // To be strictly correct, if filter is none, we should convert to JPG blob if not already.
-                // But generally, browsers handle renaming well enough for most users. 
-                // To be 100% safe for "Save as JPG" requirement:
-                
-                if (img.filter === 'none') {
-                     // Check if we need to force convert basic files to JPG blob if they aren't processed
-                     // For now, we trust the blob is compatible or renamed safely.
-                     saveAs(url, img.name);
-                } else {
-                     saveAs(url, img.name);
-                }
+                saveAs(url, img.name);
             };
 
             const saveAll = async () => {
                 if (images.length === 0) return;
-                
-                // Prompt user if many files
-                if (images.length > 5 && !confirm(`Bạn chuẩn bị tải xuống ${images.length} file riêng lẻ. Tiếp tục?`)) return;
-
-                setProcessing(true);
-                setStatusText("Đang lưu...");
-
+                if (images.length > 5 && !confirm(`Tải xuống ${images.length} file. Tiếp tục?`)) return;
+                setProcessing(true); setStatusText("Đang lưu...");
                 for (let i = 0; i < images.length; i++) {
-                    const img = images[i];
                     setStatusText(`Đang lưu ${i + 1}/${images.length}...`);
-                    
-                    saveSingleImage(img);
-                    
-                    // Crucial: Wait to prevent browser blocking multiple downloads
+                    saveSingleImage(images[i]);
                     await sleep(600); 
                 }
-
-                setProcessing(false);
-                setStatusText("");
+                setProcessing(false); setStatusText("");
             };
 
             const removeImage = (id) => {
@@ -407,6 +347,7 @@
                     }
                     return prev.filter(img => img.id !== id);
                 });
+                delete debouncedProcessors.current[id];
             };
 
             return (
@@ -418,62 +359,25 @@
                                 <Icon name="aperture" className="text-blue-500" />
                                 Bluer Filters
                             </h1>
-                            <p className="text-gray-500 mt-2 text-sm">
-                                Inspired by Saul Leiter & Daido Moriyama
-                            </p>
+                            <p className="text-gray-500 mt-2 text-sm">Inspired by Saul Leiter & Daido Moriyama</p>
                         </div>
-                        
                         <div className="flex flex-wrap justify-center gap-3">
-                            <input 
-                                type="file" 
-                                multiple 
-                                accept="image/*" 
-                                ref={fileInputRef}
-                                className="hidden"
-                                onChange={handleFileUpload}
-                            />
-                            <button 
-                                onClick={() => fileInputRef.current.click()}
-                                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-5 py-2.5 rounded-lg transition-all font-medium text-sm shadow-lg shadow-blue-900/20"
-                            >
-                                <Icon name="upload" size={18} />
-                                Thêm Ảnh
+                            <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+                            <button onClick={() => fileInputRef.current.click()} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white px-5 py-2.5 rounded-lg transition-all font-medium text-sm shadow-lg shadow-blue-900/20">
+                                <Icon name="upload" size={18} /> Thêm Ảnh
                             </button>
-                            
                             {images.length > 0 && (
-                                <button 
-                                    onClick={saveAll}
-                                    className="flex items-center gap-2 bg-green-700 hover:bg-green-600 active:scale-95 text-white px-5 py-2.5 rounded-lg transition-all font-medium text-sm shadow-lg shadow-green-900/20"
-                                    disabled={processing}
-                                >
-                                    <Icon name="download" size={18} />
-                                    Lưu Tất Cả ({images.length})
+                                <button onClick={saveAll} className="flex items-center gap-2 bg-green-700 hover:bg-green-600 active:scale-95 text-white px-5 py-2.5 rounded-lg transition-all font-medium text-sm shadow-lg shadow-green-900/20" disabled={processing}>
+                                    <Icon name="download" size={18} /> Lưu Tất Cả ({images.length})
                                 </button>
                             )}
                         </div>
                     </div>
 
-                    {/* Global Controls */}
-                    {images.length > 0 && (
-                        <div className="sticky top-2 z-20 w-full max-w-6xl mb-6">
-                            <div className="bg-[#1a1a1a]/90 backdrop-blur-md p-3 rounded-xl border border-gray-800 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
-                                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider hidden sm:block">Áp dụng nhanh:</span>
-                                <div className="flex w-full sm:w-auto gap-2">
-                                    <button onClick={() => applyBatchFilter('none')} className="flex-1 py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded text-xs font-medium transition-colors">Gốc tất cả</button>
-                                    <button onClick={() => applyBatchFilter('evoke')} className="flex-1 py-2 px-4 bg-white text-black hover:bg-gray-200 rounded text-xs font-medium transition-colors">Evoke tất cả</button>
-                                    <button onClick={() => applyBatchFilter('leiter')} className="flex-1 py-2 px-4 bg-amber-700 text-white hover:bg-amber-600 rounded text-xs font-medium transition-colors">Leiter tất cả</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
                     {/* Grid */}
                     <div className="w-full max-w-6xl flex-1">
                         {images.length === 0 ? (
-                            <div 
-                                onClick={() => fileInputRef.current.click()}
-                                className="flex flex-col items-center justify-center border-2 border-dashed border-gray-800 hover:border-gray-600 hover:bg-gray-900/30 transition-colors rounded-xl h-[50vh] text-gray-500 cursor-pointer"
-                            >
+                            <div onClick={() => fileInputRef.current.click()} className="flex flex-col items-center justify-center border-2 border-dashed border-gray-800 hover:border-gray-600 hover:bg-gray-900/30 transition-colors rounded-xl h-[50vh] text-gray-500 cursor-pointer">
                                 <Icon name="image-plus" size={48} className="mb-4 opacity-50" />
                                 <p className="text-lg font-medium">Chọn ảnh để bắt đầu</p>
                                 <p className="text-sm mt-2 opacity-60">Hỗ trợ JPG, PNG, HEIC, RAW (Auto Convert)</p>
@@ -482,55 +386,38 @@
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 pb-20">
                                 {images.map((img) => (
                                     <div key={img.id} className="bg-[#1a1a1a] rounded-lg overflow-hidden border border-gray-800 flex flex-col shadow-lg">
-                                        {/* Image Area */}
                                         <div className="relative aspect-[3/2] bg-black group">
-                                            <img 
-                                                src={img.processedUrl || img.previewUrl} 
-                                                className="w-full h-full object-contain"
-                                                alt={img.name}
-                                                loading="lazy"
-                                            />
-                                            <button 
-                                                onClick={() => removeImage(img.id)}
-                                                className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-red-600 backdrop-blur-md rounded-full text-white opacity-0 group-hover:opacity-100 transition-all"
-                                            >
+                                            <img src={img.processedUrl || img.previewUrl} className="w-full h-full object-contain" alt={img.name} loading="lazy" />
+                                            <button onClick={() => removeImage(img.id)} className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-red-600 backdrop-blur-md rounded-full text-white opacity-0 group-hover:opacity-100 transition-all">
                                                 <Icon name="x" size={14} />
                                             </button>
                                         </div>
-
-                                        {/* Controls Area */}
-                                        <div className="p-3 bg-[#151515]">
-                                            <div className="flex justify-between items-center mb-3">
+                                        <div className="p-3 bg-[#151515] flex flex-col gap-3">
+                                            <div className="flex justify-between items-center">
                                                 <p className="text-xs text-gray-400 truncate w-2/3" title={img.name}>{img.name}</p>
-                                                <button 
-                                                    onClick={() => saveSingleImage(img)}
-                                                    className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 font-medium"
-                                                >
+                                                <button onClick={() => saveSingleImage(img)} className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 font-medium">
                                                     <Icon name="download" size={12} /> Lưu
                                                 </button>
                                             </div>
-                                            
-                                            {/* Filter Toggle Buttons */}
                                             <div className="grid grid-cols-3 gap-1 bg-black p-1 rounded-lg">
-                                                <button 
-                                                    onClick={() => handleFilterChange(img.id, 'none')}
-                                                    className={`py-1.5 text-[10px] uppercase font-bold tracking-wider rounded transition-colors ${img.filter === 'none' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                                                >
-                                                    Gốc
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleFilterChange(img.id, 'evoke')}
-                                                    className={`py-1.5 text-[10px] uppercase font-bold tracking-wider rounded transition-colors ${img.filter === 'evoke' ? 'bg-white text-black' : 'text-gray-500 hover:text-gray-300'}`}
-                                                >
-                                                    Evoke
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleFilterChange(img.id, 'leiter')}
-                                                    className={`py-1.5 text-[10px] uppercase font-bold tracking-wider rounded transition-colors ${img.filter === 'leiter' ? 'bg-amber-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                                                >
-                                                    Leiter
-                                                </button>
+                                                <button onClick={() => handleFilterButtonClick(img.id, 'none')} className={`py-1.5 text-[10px] uppercase font-bold tracking-wider rounded transition-colors ${img.filter === 'none' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>Gốc</button>
+                                                <button onClick={() => handleFilterButtonClick(img.id, 'evoke')} className={`py-1.5 text-[10px] uppercase font-bold tracking-wider rounded transition-colors ${img.filter === 'evoke' ? 'bg-white text-black' : 'text-gray-500 hover:text-gray-300'}`}>Evoke</button>
+                                                <button onClick={() => handleFilterButtonClick(img.id, 'leiter')} className={`py-1.5 text-[10px] uppercase font-bold tracking-wider rounded transition-colors ${img.filter === 'leiter' ? 'bg-amber-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}>Leiter</button>
                                             </div>
+                                            {/* Intensity Slider */}
+                                            {img.filter !== 'none' && (
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <Icon name="sliders-horizontal" size={14} className="text-gray-500" />
+                                                    <input 
+                                                        type="range" 
+                                                        min="0" max="100" 
+                                                        value={img.intensity} 
+                                                        onChange={(e) => handleIntensityChange(img.id, parseInt(e.target.value))}
+                                                        className="flex-1"
+                                                    />
+                                                    <span className="text-xs font-mono text-gray-400 w-8 text-right">{img.intensity}%</span>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
@@ -538,7 +425,6 @@
                         )}
                     </div>
                     
-                    {/* Processing Overlay */}
                     {processing && (
                         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-center px-4">
                             <div className="loader mb-4 border-t-blue-500"></div>
